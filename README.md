@@ -192,6 +192,65 @@ proxy = await AsyncFreeProxy(country_id=['US'], max_concurrent=50).get()
   Raise it for faster scanning on a strong connection, lower it to be gentler on
   your network and the test URL.
 
+## ProxyPool
+
+`ProxyPool` is built for batch collection: instead of one proxy per call, a single
+`get(n)` scrapes **all four source sites at once** (concurrently), merges and
+de-duplicates the candidates, checks them concurrently, and returns up to `n`
+working proxies. A failed source only marks that source as failed — the others
+still contribute candidates.
+
+```python
+from fp.pool import ProxyPool
+
+pool = ProxyPool()
+proxies = pool.get(10)
+```
+
+It accepts the same filter and check options as `FreeProxy` (`country_id`,
+`timeout`, `rand`, `anonym`, `elite`, `google`, `https`, `url`,
+`request_timeout`), plus pool-specific ones:
+
+| Parameter      | Type      | Default value | Description |
+| -------------- | --------- | ------------- | ----------- |
+| max_concurrent | int > 0   | 20            | Maximum number of proxies checked at the same time |
+| cache_ttl      | float     | 600           | Seconds the scraped candidate list stays fresh; `get()` within the TTL does not re-scrape the sources |
+| cooldown       | float     | 300           | Seconds a failed proxy is skipped before it becomes a candidate again |
+| retries        | int       | 2             | Extra attempts before an unreachable proxy is confirmed down |
+| sources        | list      | `fp.sources.SOURCES` | Source site configs; add a site by appending a config dict |
+
+Cache, cooldown and check records live on the pool instance and are shared
+across `get()` calls, so reuse one pool instead of creating one per call.
+Concurrent `get()` calls on the same pool share a single refresh round.
+
+`get(n)` returns a list of dicts (up to `n` entries), each with at least:
+
+| Key        | Description |
+| ---------- | ----------- |
+| proxy      | Proxy URL, e.g. `'http://113.160.218.14:8888'` |
+| sources    | Ids of the sources the proxy was found on, in config order |
+| anonymity  | Strongest reported level: `'elite'`, `'anonymous'` or `'transparent'` |
+| https      | `True` if any source marked the proxy as HTTPS |
+| google     | `True` if any source marked the proxy as "google" |
+| country    | First non-empty country code reported for the proxy |
+| latency_ms | Measured check latency in milliseconds |
+
+Results are ordered by anonymity (elite first), then HTTPS support, then
+latency, then address; with `rand=True` the candidates are shuffled instead.
+`get(n)` stops checking as soon as `n` working proxies are found. If the pool
+runs out of candidates first, it returns what it has — no exception — and sets
+`exhausted` in the report. `FreeProxyException` is raised only when not a
+single working proxy was found.
+
+`pool.report()` returns per-source stats (`id`, `ok`, `error`, `elapsed_ms`,
+`candidates`, `bad_rows`) plus `checked`, `cooldown_skipped` and `exhausted`
+counters for the last `get()` round:
+
+```python
+{'sources': [{'id': 'sslproxies', 'ok': True, 'error': None, ...}, ...],
+ 'checked': 42, 'cooldown_skipped': 3, 'exhausted': False}
+```
+
 ## CHANGELOG
 
 ---
