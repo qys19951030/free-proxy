@@ -15,6 +15,23 @@ except ImportError:
     aiohttp = None
 
 
+def check_proxy_is_working(url, schema, timeout, proxy_address):
+    '''Return the proxy URL if a request through proxy_address succeeds and
+    the peer we actually talked to is the proxy itself; otherwise None.
+
+    The proxies mapping covers both schemes because requests selects the
+    proxy by the URL scheme -- otherwise e.g. an https test URL with the
+    default http schema bypasses the proxy entirely.
+    '''
+    proxies = {'http': f'http://{proxy_address}',
+               'https': f'http://{proxy_address}'}
+    ip = proxy_address.split(':')[0]
+    with requests.get(url, proxies=proxies, timeout=timeout, stream=True) as r:
+        if r.raw.connection.sock and r.raw.connection.sock.getpeername()[0] == ip:
+            return proxies[schema]
+    return
+
+
 class FreeProxy:
     '''
     FreeProxy class scrapes proxies from <https://www.sslproxies.org/>,
@@ -84,13 +101,9 @@ class FreeProxy:
             random.shuffle(proxy_list)
         working_proxy = None
         for proxy_address in proxy_list:
-            # requests selects the proxy by the URL scheme, so the mapping
-            # must cover both -- otherwise e.g. an https test URL with the
-            # default http schema bypasses the proxy entirely.
-            proxies = {'http': f'http://{proxy_address}',
-                       'https': f'http://{proxy_address}'}
             try:
-                working_proxy = self.__check_if_proxy_is_working(proxies)
+                working_proxy = check_proxy_is_working(
+                    self.url, self.schema, self.timeout, proxy_address)
                 if working_proxy:
                     return working_proxy
             except requests.exceptions.RequestException:
@@ -101,14 +114,6 @@ class FreeProxy:
             return self.get(repeat=True)
         raise FreeProxyException(
             'There are no working proxies at this time.')
-
-    def __check_if_proxy_is_working(self, proxies):
-        url = self.url
-        ip = proxies[self.schema].split(':')[1][2:]
-        with requests.get(url, proxies=proxies, timeout=self.timeout, stream=True) as r:
-            if r.raw.connection.sock and r.raw.connection.sock.getpeername()[0] == ip:
-                return proxies[self.schema]
-        return
 
 
 class AsyncFreeProxy(FreeProxy):
